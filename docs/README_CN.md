@@ -7,7 +7,7 @@
 <h1 align="center">ZeroClaw 🦀</h1>
 
 <p align="center">
-<strong>零开销。零妥协。 100% Rust。 100% 通用。</strong><br>
+<strong>零开销。零妥协。100% Rust。100% 通用。</strong><br>
 ⚡️ <strong>在 10 美元硬件和 <5MB RAM 上运行：内存比 OpenClaw 少 99%，比 Mac mini 便宜 98%！</strong>
 </p>
 
@@ -17,7 +17,7 @@
   <a href="https://buymeacoffee.com/argenistherose"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Donate-yellow.svg?style=flat&logo=buy-me-a-coffee" alt="Buy Me a Coffee" /></a>
 </p>
 
-快速、小巧且完全自主的 AI 助手基础设施 —— 随处部署，万物可换。
+快速、小巧且完全自主的 AI 助手基础设施 — — 随处部署，万物可换。
 
 ```
 ~3.4MB 二进制文件 · <10ms 启动时间 · 1,017 个测试 · 22+ 提供商（providers） · 8 个 Trait · 万物可插拔
@@ -28,7 +28,7 @@
 - 🏎️ **超轻量级：** <5MB 内存占用 — 比 OpenClaw 核心小 99%。
 - 💰 **最低成本：** 足够高效，可以在 10 美元的硬件上运行 — 比 Mac mini 便宜 98%。
 - ⚡ **闪电般快速：** 启动时间加快 400 倍，启动时间 <10 毫秒（即使在 0.6GHz 内核上，启动时间也低于 1 秒）。
-- 🌍 **真正的可移植性：**跨ARM、x86 和RISC-V 的单个独立二进制文件。
+- 🌍 **真正的可移植性：**跨 ARM、x86 和 RISC-V 的单个独立二进制文件。
 
 ### 为什么团队选择 ZeroClaw
 
@@ -41,11 +41,11 @@
 
 本地机器快速基准测试（macOS arm64，2026 年 2 月），针对 0.8GHz 边缘硬件进行了归一化处理。
 
-|  | OpenClaw | NanoBot | PicoClaw | ZeroClaw 🦀 |
+| | OpenClaw | NanoBot | PicoClaw | ZeroClaw 🦀 |
 |---|---|---|---|---|
 | **语言** | TypeScript | Python | Go | **Rust** |
 | **内存** | > 1GB | > 100MB | <10MB | **< 5MB** |
-| **启动（0.8GHz 核心）** | > 500秒 | > 30秒 | <1秒 | **< 10 毫秒** |
+| **启动（0.8GHz 核心）** | > 500 秒 | > 30 秒 | <1 秒 | **< 10 毫秒** |
 | **二进制大小** | ~28MB (dist) | N/A (脚本) | ~8MB | **3.4 MB** |
 | **成本** | Mac Mini $599 | Linux SBC ~$50 | Linux 开发板 $10 | **任意硬件 $10** |
 
@@ -72,13 +72,13 @@ ls -lh target/release/zeroclaw
 
 #### 必需
 
-1. **Visual Studio Build Tools**（提供MSVC链接器和Windows SDK）：
+1. **Visual Studio Build Tools**（提供 MSVC 链接器和 Windows SDK）：
    ```powershell
    winget install Microsoft.VisualStudio.2022.BuildTools
    ```
 在安装过程中（或通过 Visual Studio 安装程序），选择 **“使用 C++ 进行桌面开发”** 工作负载。
 
-2. **Rust工具链：**
+2. **Rust 工具链：**
    ```powershell
    winget install Rustlang.Rustup
    ```
@@ -106,7 +106,7 @@ ls -lh target/release/zeroclaw
    - **Linux (Fedora/RHEL):** `sudo dnf groupinstall "Development Tools" && sudo dnf install pkg-config`
    - **macOS:** 安装 Xcode 命令行 Tools: `xcode-select --install`
 
-2. **Rust工具链：**
+2. **Rust 工具链：**
    ```bash
    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
    ```
@@ -173,7 +173,7 @@ zeroclaw integrations info Telegram
 zeroclaw service install
 zeroclaw service status
 
-# 从OpenClaw迁移内存（首先安全预览）
+# 从 OpenClaw 迁移内存（先进行安全预览）
 zeroclaw migrate openclaw --dry-run
 zeroclaw migrate openclaw
 ```
@@ -182,7 +182,7 @@ zeroclaw migrate openclaw
 
 ## 建筑学
 
-每个子系统都是一个**特征**——通过配置更改来交换实现，零代码更改。
+每个子系统都是一个**特征** — — 通过配置更改来交换实现，零代码更改。
 
 <p align="center">
   <img src="docs/architecture.svg" alt="ZeroClaw Architecture" width="900" />
@@ -191,7 +191,7 @@ zeroclaw migrate openclaw
 | 子系统 | 特征 | 发货时附带 | 延长 |
 |-----------|-------|------------|--------|
 | **人工智能模型** | `Provider` | 22+ 提供商（providers）（OpenRouter、Anthropic、OpenAI、Ollama、Venice、Groq、Mistral、xAI、DeepSeek、Together、Fireworks、Perplexity、Cohere、Bedrock 等） | `custom:https://your-api.com` — 任何 OpenAI 兼容 API |
-| **Channels** | `Channel` | CLI、Telegram、Discord、Slack、iMessage、矩阵、WhatsApp、Webhook | 任何消息API |
+| **Channels** | `Channel` | CLI、Telegram、Discord、Slack、iMessage、矩阵、WhatsApp、Webhook | 任何消息 API |
 | **Memory** | `Memory` | SQLite 混合搜索（FTS5 + 矢量余弦相似度）、Lucid 桥接（CLI 同步 + SQLite 后备）、Markdown | 任何持久化后端 |
 | **Tools** | `Tool` | shell、file_read、file_write、memory_store、memory_recall、memory_forget、browser_open（Brave + 白名单）、浏览器（代理浏览器/rust-native）、composio（可选） | 任何能力 |
 | **可观察性** | `Observer` | Noop、日志、多 | Prometheus, OTel |
@@ -199,7 +199,7 @@ zeroclaw migrate openclaw
 | **安全** | `SecurityPolicy` | Gateway 配对、沙箱、白名单、速率限制、文件系统范围、加密秘密 | — |
 | **身份** | `IdentityConfig` | OpenClaw（降价）、AIEOS v1.1 (JSON) | 任何身份格式 |
 | **Tunnel** | `Tunnel` | 无、Cloudflare、Tailscale、ngrok、自定义 | 任何隧道二进制文件 |
-| **心跳** | 引擎 | HEARTBEAT.md定期任务 | — |
+| **心跳** | 引擎 | HEARTBEAT.md 定期任务 | — |
 | **技能** | 装载机 | TOML 清单 + SKILL.md 说明 | 社区技能包 |
 | **整合** | 登记处 | 跨 9 个类别的 50 多个集成 | 插件系统 |
 
@@ -210,13 +210,13 @@ zeroclaw migrate openclaw
 
 当配置了不受支持的 `runtime.kind` 时，ZeroClaw 现在会退出并显示明显的错误，而不是默默地回退到本机。
 
-### Memory系统（全栈搜索引擎）
+### Memory 系统（全栈搜索引擎）
 
-所有自定义，零外部依赖 - 没有Pinecone，没有Elasticsearch，没有LangChain：
+所有自定义，零外部依赖 - 没有 Pinecone，没有 Elasticsearch，没有 LangChain：
 
 | 层 | 执行 |
 |-------|---------------|
-| **矢量数据库** | 嵌入存储为BLOB in SQLite，余弦相似度搜索 |
+| **矢量数据库** | 嵌入存储为 BLOB in SQLite，余弦相似度搜索 |
 | **关键字搜索** | FTS5 虚拟牌桌，BM25 计分 |
 | **混合合并** | 自定义加权合并函数（`vector.rs`） |
 | **嵌入** | `EmbeddingProvider` 特征 — OpenAI、自定义 URL 或 noop |
@@ -247,16 +247,16 @@ keyword_weight = 0.3
 
 ## 安全
 
-ZeroClaw 在**每一层**强制执行安全性——而不仅仅是沙箱。它通过了社区安全检查表中的所有项目。
+ZeroClaw 在**每一层**强制执行安全性 — — 而不仅仅是沙箱。它通过了社区安全检查表中的所有项目。
 
 ### 安全检查表
 
 | # | 物品 | 地位 | 如何 |
 |---|------|--------|-----|
-| 1 | **Gateway 未公开暴露** | ✅ | 默认绑定`127.0.0.1`。在没有隧道或显式`allow_public_bind = true`的情况下拒绝`0.0.0.0`。 |
-| 2 | **需要配对** | ✅ | 启动时的 6 位一次性代码。通过`POST /pair` 交换不记名令牌。所有`/webhook` 请求都需要`Authorization: Bearer <token>`。 |
-| 3 | **文件系统范围（无/）** | ✅ | 默认`workspace_only = true`。 14 个系统目录 + 4 个敏感点文件被阻止。空字节注入被阻止。通过文件读/写工具中的规范化+解析路径工作区检查进行符号链接转义检测。 |
-| 4 | **只能通过隧道进入** | ✅ | Gateway 在没有活动隧道的情况下拒绝公共绑定。支持Tailscale、Cloudflare、ngrok或任何自定义隧道。 |
+| 1 | **Gateway 未公开暴露** | ✅ | 默认绑定`127.0.0.1`。在没有隧道或显式`allow_public_bind = true`的情况下拒绝`0.0.0.0`。|
+| 2 | **需要配对** | ✅ | 启动时的 6 位一次性代码。通过`POST /pair` 交换不记名令牌。所有`/webhook` 请求都需要`Authorization: Bearer <token>`。|
+| 3 | **文件系统范围（无/）** | ✅ | 默认`workspace_only = true`。14 个系统目录 + 4 个敏感点文件被阻止。空字节注入被阻止。通过文件读/写工具中的规范化+解析路径工作区检查进行符号链接转义检测。|
+| 4 | **只能通过隧道进入** | ✅ | Gateway 在没有活动隧道的情况下拒绝公共绑定。支持 Tailscale、Cloudflare、ngrok 或任何自定义隧道。|
 
 > **运行您自己的 nmap：** `nmap -p 1-65535 <your-host>` — ZeroClaw 仅绑定到本地主机，因此除非您显式配置隧道，否则不会暴露任何内容。
 
@@ -272,9 +272,9 @@ ZeroClaw 在**每一层**强制执行安全性——而不仅仅是沙箱。它�
 
 推荐的低摩擦设置（安全+快速）：
 
-- **Telegram：** 将您自己的`@username`（不含`@`）和/或您的数字Telegram 用户ID 列入白名单。
-- **Discord:** 将您自己的Discord 用户 ID 列入白名单。
-- **Slack：** 将您自己的Slack 会员 ID 列入白名单（通常以 `U` 开头）。
+- **Telegram：** 将您自己的`@username`（不含`@`）和/或您的数字 Telegram 用户 ID 列入白名单。
+- **Discord:** 将您自己的 Discord 用户 ID 列入白名单。
+- **Slack：** 将您自己的 Slack 会员 ID 列入白名单（通常以 `U` 开头）。
 - `"*"`仅用于临时开放测试。
 
 如果您不确定要使用哪个身份：
@@ -294,8 +294,8 @@ zeroclaw onboard --channels-only
 
 WhatsApp 使用 Meta 的 Cloud API 和 webhooks（基于推送，而不是轮询）：
 
-1. **创建Meta商业应用程序：**
-   - Go至[开发者.facebook.com](https://developers.facebook.com)
+1. **创建 Meta 商业应用程序：**
+   - Go 至[开发者.facebook.com](https://developers.facebook.com)
    - 创建新应用→选择“商业”类型
    - 添加“WhatsApp”产品
 
@@ -304,7 +304,7 @@ WhatsApp 使用 Meta 的 Cloud API 和 webhooks（基于推送，而不是轮询
    - **电话号码 ID：** 从 WhatsApp → API 设置 → 电话号码 ID
    - **验证令牌：** 您定义此（任何随机字符串） - Meta 将在 webhook 验证期间将其发回
 
-3. **配置ZeroClaw:**
+3. **配置 ZeroClaw:**
    ```toml
    [channels_config.whatsapp]
    access_token = "EAABx..."
@@ -319,8 +319,8 @@ WhatsApp 使用 Meta 的 Cloud API 和 webhooks（基于推送，而不是轮询
    ```
 WhatsApp 需要 HTTPS，因此请使用隧道（ngrok、Cloudflare、Tailscale 漏斗）。
 
-5. **配置Meta webhook：**
-   - 在Meta开发者控制台→WhatsApp→配置→Webhook
+5. **配置 Meta webhook：**
+   - 在 Meta 开发者控制台→WhatsApp→配置→Webhook
    - **回调网址：** `https://your-tunnel-url/whatsapp`
    - **验证令牌：**与配置中的`verify_token`相同
    - 订阅`messages`字段
@@ -352,7 +352,7 @@ allow_public_bind = false       # 拒绝没有隧道的 0.0.0.0
 
 [autonomy]
 level = "supervised"            # “只读”、“受监督”、“完整”（默认: 受监督）
-workspace_only = true           # 默认值： true — 范围为工作区
+workspace_only = true           # 默认值：true — 范围为工作区
 allowed_commands = ["git", "npm", "cargo", "ls", "cat", "grep"]
 forbidden_paths = ["/etc", "/root", "/proc", "/sys", "~/.ssh", "~/.gnupg", "~/.aws"]
 
@@ -363,7 +363,7 @@ kind = "native"                # “本地”或“码头工人”
 image = "alpine:3.20"          # 用于 shell 执行的容器镜像
 network = "none"               # docker 网络模式（“无”、“桥接”等）
 memory_limit_mb = 512          # 可选内存限制（MB）
-cpu_limit = 1.0                # 可选CPU限制
+cpu_limit = 1.0                # 可选 CPU 限制
 read_only_rootfs = true        # 将根文件系统挂载为只读
 mount_workspace = true         # 将工作空间挂载到 /workspace
 allowed_workspace_roots = []   # 用于工作区安装验证的可选允许列表
@@ -397,7 +397,7 @@ window_allowlist = []                 # 可选的窗口标题/进程白名单提
 
 # Rust-本机后端构建标志：
 # Cargo build --release --features 浏览器原生
-# 确保 WebDriver 服务器正在运行，例如chromedriver --端口=9515
+# 确保 WebDriver 服务器正在运行，例如 chromedriver --port=9515
 
 # 计算机使用 sidecar 合约 (MVP)
 # POST browser.computer_use.endpoint
@@ -450,7 +450,7 @@ print(result["messages"][-1].content)
 - **所有提供商的一致工具调用**（即使是那些原生支持较差的提供商）
 - **自动工具循环** — 不断调用工具直到任务完成
 - **轻松扩展** - 使用 `@tool` 装饰器添加自定义工具
-- **包括Discord 机器人集成**（Telegram 已计划）
+- **包括 Discord 机器人集成**（Telegram 已计划）
 
 有关完整文档，请参阅[`python/README.md`](python/README.md)。
 
@@ -466,12 +466,12 @@ ZeroClaw 通过两种格式支持**身份无关**人工智能角色：
 - `USER.md` — 代理正在帮助谁
 - `AGENTS.md` — 行为准则
 
-### AIEOS（AI实体对象规范）
+### AIEOS（AI 实体对象规范）
 
-[AIEOS](https://aieos.org)是便携式人工智能身份的标准化框架。 ZeroClaw 支持AIEOS v1.1 JSON 有效负载，允许您：
+[AIEOS](https://aieos.org)是便携式人工智能身份的标准化框架。ZeroClaw 支持 AIEOS v1.1 JSON 有效负载，允许您：
 
-- **从AIEOS生态系统导入身份**
-- **导出身份**到其他AIEOS兼容系统
+- **从 AIEOS 生态系统导入身份**
+- **导出身份**到其他 AIEOS 兼容系统
 - **在不同的人工智能模型中保持行为完整性**
 
 #### 启用 AIEOS
@@ -482,7 +482,7 @@ format = "aieos"
 aieos_path = "identity.json"  # 相对于工作空间或绝对路径
 ```
 
-或内联JSON：
+或内联 JSON：
 
 ```toml
 [identity]
@@ -582,7 +582,7 @@ cargo build --release --locked
 cargo install --path . --force --locked
 ```
 
-ZeroClaw 配置为使用 `rustls` 进行 HTTP/TLS 依赖项； `--locked` 使传递图在新环境中保持确定性。
+ZeroClaw 配置为使用 `rustls` 进行 HTTP/TLS 依赖项；`--locked` 使传递图在新环境中保持确定性。
 
 在开发过程中需要快速推送时跳过钩子：
 
@@ -610,12 +610,12 @@ ZeroClaw 是一个充满热情维护的开源项目。如果你觉得它有用�
 
 衷心感谢激发和推动这项开源工作的社区和机构：
 
-- **哈佛大学**——培养求知欲并突破可能的界限。
-- **麻省理工学院**——倡导开放知识、开源以及技术应该为每个人所用的信念。
+- **哈佛大学** — — 培养求知欲并突破可能的界限。
+- **麻省理工学院** — — 倡导开放知识、开源以及技术应该为每个人所用的信念。
 - **Sundai Club** — 为社区、活力以及打造重要事物的不懈动力。
 - **世界与彼岸** 🌍✨ — 致每一位贡献者、梦想家和建设者，让开源成为一股向善的力量。这是给您的。
 
-我们正在公开建设，因为最好的想法来自四面八方。如果您正在阅读本文，那么您就是其中的一部分。欢迎。 🦀❤️
+我们正在公开建设，因为最好的想法来自四面八方。如果您正在阅读本文，那么您就是其中的一部分。欢迎。🦀❤️
 
 ## 许可证
 
@@ -636,7 +636,7 @@ Apache 2.0 — 详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)（贡献者署名�
 
 ---
 
-**ZeroClaw** — 零开销。零妥协。随处部署。万物可换。 🦀
+**ZeroClaw** — 零开销。零妥协。随处部署。万物可换。🦀
 
 ## Star History
 
