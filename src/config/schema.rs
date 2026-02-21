@@ -39,7 +39,8 @@ const SUPPORTED_PROXY_SERVICE_KEYS: &[&str] = &[
     "tool.pushover",
     "memory.embeddings",
     "tunnel.custom",
-    "transcription.groq",
+    "voice.stt",
+    "voice.tts",
 ];
 
 const SUPPORTED_PROXY_SERVICE_SELECTORS: &[&str] = &[
@@ -48,7 +49,7 @@ const SUPPORTED_PROXY_SERVICE_SELECTORS: &[&str] = &[
     "tool.*",
     "memory.*",
     "tunnel.*",
-    "transcription.*",
+    "voice.*",
 ];
 
 static RUNTIME_PROXY_CONFIG: OnceLock<RwLock<ProxyConfig>> = OnceLock::new();
@@ -199,6 +200,10 @@ pub struct Config {
     #[serde(default)]
     pub hardware: HardwareConfig,
 
+    /// Voice pipeline configuration (STT + TTS for voice messages).
+    #[serde(default)]
+    pub voice: VoiceConfig,
+
     /// Voice transcription configuration (Whisper API via Groq).
     #[serde(default)]
     pub transcription: TranscriptionConfig,
@@ -314,7 +319,115 @@ impl Default for HardwareConfig {
     }
 }
 
-// ── Transcription ────────────────────────────────────────────────
+// ── Voice Pipeline ─────────────────────────────────────────────
+
+/// Configuration for the voice pipeline (STT + TTS).
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VoiceConfig {
+    /// Whether voice processing is enabled.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// How to reply: "match_input", "voice_only", or "text_and_voice".
+    #[serde(default)]
+    pub reply_mode: Option<String>,
+
+    /// Speech-to-text provider configuration.
+    #[serde(default)]
+    pub stt: VoiceSttConfig,
+
+    /// Text-to-speech provider configuration.
+    #[serde(default)]
+    pub tts: VoiceTtsConfig,
+}
+
+impl Default for VoiceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            reply_mode: None,
+            stt: VoiceSttConfig::default(),
+            tts: VoiceTtsConfig::default(),
+        }
+    }
+}
+
+/// Speech-to-text provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VoiceSttConfig {
+    /// Provider name (e.g. "assemblyai").
+    #[serde(default = "default_stt_provider")]
+    pub provider: String,
+
+    /// Inline API key (takes priority over api_key_env).
+    #[serde(default)]
+    pub api_key: Option<String>,
+
+    /// Environment variable name holding the API key.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+}
+
+fn default_stt_provider() -> String {
+    "assemblyai".into()
+}
+
+impl Default for VoiceSttConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_stt_provider(),
+            api_key: None,
+            api_key_env: None,
+        }
+    }
+}
+
+/// Text-to-speech provider configuration.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct VoiceTtsConfig {
+    /// Provider name (e.g. "inworld").
+    #[serde(default = "default_tts_provider")]
+    pub provider: String,
+
+    /// Inline API key (takes priority over api_key_env).
+    #[serde(default)]
+    pub api_key: Option<String>,
+
+    /// Environment variable name holding the API key.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+
+    /// Voice/character ID for the TTS provider.
+    #[serde(default)]
+    pub voice_id: Option<String>,
+
+    /// TTS model ID (provider-specific).
+    #[serde(default)]
+    pub model: Option<String>,
+
+    /// Output audio format (e.g. "ogg_opus", "mp3").
+    #[serde(default)]
+    pub output_format: Option<String>,
+}
+
+fn default_tts_provider() -> String {
+    "inworld".into()
+}
+
+impl Default for VoiceTtsConfig {
+    fn default() -> Self {
+        Self {
+            provider: default_tts_provider(),
+            api_key: None,
+            api_key_env: None,
+            voice_id: None,
+            model: None,
+            output_format: None,
+        }
+    }
+}
+
+// ── Transcription (Groq Whisper) ─────────────────────────────────
 
 fn default_transcription_api_url() -> String {
     "https://api.groq.com/openai/v1/audio/transcriptions".into()
@@ -3296,6 +3409,7 @@ impl Default for Config {
             hooks: HooksConfig::default(),
             hardware: HardwareConfig::default(),
             query_classification: QueryClassificationConfig::default(),
+            voice: VoiceConfig::default(),
             transcription: TranscriptionConfig::default(),
         }
     }
@@ -4528,6 +4642,7 @@ default_temperature = 0.7
             agents: HashMap::new(),
             hooks: HooksConfig::default(),
             hardware: HardwareConfig::default(),
+            voice: VoiceConfig::default(),
             transcription: TranscriptionConfig::default(),
         };
 
@@ -4701,6 +4816,7 @@ tool_dispatcher = "xml"
             agents: HashMap::new(),
             hooks: HooksConfig::default(),
             hardware: HardwareConfig::default(),
+            voice: VoiceConfig::default(),
             transcription: TranscriptionConfig::default(),
         };
 
@@ -6685,38 +6801,41 @@ default_model = "legacy-model"
     }
 
     #[test]
-    async fn transcription_config_defaults() {
-        let tc = TranscriptionConfig::default();
-        assert!(!tc.enabled);
-        assert!(tc.api_url.contains("groq.com"));
-        assert_eq!(tc.model, "whisper-large-v3-turbo");
-        assert!(tc.language.is_none());
-        assert_eq!(tc.max_duration_secs, 120);
+    async fn voice_config_defaults() {
+        let vc = VoiceConfig::default();
+        assert!(!vc.enabled);
+        assert!(vc.reply_mode.is_none());
+        assert_eq!(vc.stt.provider, "assemblyai");
+        assert!(vc.stt.api_key.is_none());
+        assert_eq!(vc.tts.provider, "inworld");
+        assert!(vc.tts.voice_id.is_none());
     }
 
     #[test]
-    async fn config_roundtrip_with_transcription() {
+    async fn config_roundtrip_with_voice() {
         let mut config = Config::default();
-        config.transcription.enabled = true;
-        config.transcription.language = Some("en".into());
+        config.voice.enabled = true;
+        config.voice.reply_mode = Some("match_input".into());
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
 
-        assert!(parsed.transcription.enabled);
-        assert_eq!(parsed.transcription.language.as_deref(), Some("en"));
-        assert_eq!(parsed.transcription.model, "whisper-large-v3-turbo");
+        assert!(parsed.voice.enabled);
+        assert_eq!(parsed.voice.reply_mode.as_deref(), Some("match_input"));
+        assert_eq!(parsed.voice.stt.provider, "assemblyai");
+        assert_eq!(parsed.voice.tts.provider, "inworld");
     }
 
     #[test]
-    async fn config_without_transcription_uses_defaults() {
+    async fn config_without_voice_uses_defaults() {
         let toml_str = r#"
             default_provider = "openrouter"
             default_model = "test-model"
             default_temperature = 0.7
         "#;
         let parsed: Config = toml::from_str(toml_str).unwrap();
-        assert!(!parsed.transcription.enabled);
-        assert_eq!(parsed.transcription.max_duration_secs, 120);
+        assert!(!parsed.voice.enabled);
+        assert_eq!(parsed.voice.stt.provider, "assemblyai");
+        assert_eq!(parsed.voice.tts.provider, "inworld");
     }
 }

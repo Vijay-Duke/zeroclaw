@@ -1,4 +1,68 @@
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+
+// ---------------------------------------------------------------------------
+// Voice boundary types — owned here because channels produce and consume them.
+// The voice subsystem imports these for its pipeline trait signatures.
+// ---------------------------------------------------------------------------
+
+/// Supported audio formats for voice messages.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AudioFormat {
+    /// OGG container with Opus codec (Telegram native)
+    OggOpus,
+    Mp3,
+    Wav,
+    Webm,
+}
+
+impl AudioFormat {
+    /// MIME type for this format.
+    pub fn mime_type(&self) -> &'static str {
+        match self {
+            Self::OggOpus => "audio/ogg",
+            Self::Mp3 => "audio/mpeg",
+            Self::Wav => "audio/wav",
+            Self::Webm => "audio/webm",
+        }
+    }
+
+    /// File extension for this format.
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Self::OggOpus => "ogg",
+            Self::Mp3 => "mp3",
+            Self::Wav => "wav",
+            Self::Webm => "webm",
+        }
+    }
+}
+
+/// Audio data produced by text-to-speech synthesis.
+#[derive(Debug, Clone)]
+pub struct AudioOutput {
+    pub data: Vec<u8>,
+    pub format: AudioFormat,
+    pub duration_ms: Option<u64>,
+}
+
+/// Voice attachment metadata extracted from an incoming message.
+#[derive(Debug, Clone)]
+pub struct VoiceAttachment {
+    pub url: String,
+    pub format: AudioFormat,
+    pub duration_secs: Option<u32>,
+}
+
+/// Result of outgoing voice processing.
+#[derive(Debug)]
+pub enum VoiceOutput {
+    /// Response includes synthesized audio.
+    WithAudio { text: String, audio: AudioOutput },
+    /// Response is text-only (no voice synthesis needed).
+    TextOnly(String),
+}
 
 /// A message received from or sent to a channel
 #[derive(Debug, Clone)]
@@ -12,6 +76,8 @@ pub struct ChannelMessage {
     /// Platform thread identifier (e.g. Slack `ts`, Discord thread ID).
     /// When set, replies should be posted as threaded responses.
     pub thread_ts: Option<String>,
+    /// Present when the incoming message is a voice/audio message.
+    pub voice_attachment: Option<VoiceAttachment>,
 }
 
 /// Message to send through a channel
@@ -142,6 +208,22 @@ pub trait Channel: Send + Sync {
     ) -> anyhow::Result<()> {
         Ok(())
     }
+
+    /// Whether this channel supports sending voice audio replies.
+    fn supports_voice(&self) -> bool {
+        false
+    }
+
+    /// Send a voice message as raw audio bytes.
+    /// Only called when `supports_voice()` returns true.
+    async fn send_voice_bytes(
+        &self,
+        _recipient: &str,
+        _audio: &[u8],
+        _format: AudioFormat,
+    ) -> anyhow::Result<()> {
+        anyhow::bail!("Voice sending not supported on this channel")
+    }
 }
 
 #[cfg(test)]
@@ -172,6 +254,7 @@ mod tests {
                 channel: "dummy".into(),
                 timestamp: 123,
                 thread_ts: None,
+                voice_attachment: None,
             })
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))
@@ -188,6 +271,7 @@ mod tests {
             channel: "dummy".into(),
             timestamp: 999,
             thread_ts: None,
+            voice_attachment: None,
         };
 
         let cloned = message.clone();
@@ -255,5 +339,19 @@ mod tests {
         assert_eq!(received.sender, "tester");
         assert_eq!(received.content, "hello");
         assert_eq!(received.channel, "dummy");
+    }
+
+    #[test]
+    fn audio_format_mime_types() {
+        assert_eq!(AudioFormat::OggOpus.mime_type(), "audio/ogg");
+        assert_eq!(AudioFormat::Mp3.mime_type(), "audio/mpeg");
+        assert_eq!(AudioFormat::Wav.mime_type(), "audio/wav");
+        assert_eq!(AudioFormat::Webm.mime_type(), "audio/webm");
+    }
+
+    #[test]
+    fn audio_format_extensions() {
+        assert_eq!(AudioFormat::OggOpus.extension(), "ogg");
+        assert_eq!(AudioFormat::Mp3.extension(), "mp3");
     }
 }

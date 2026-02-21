@@ -412,6 +412,32 @@ impl TelegramChannel {
         format!("{}/bot{}/{method}", self.api_base, self.bot_token)
     }
 
+    /// Resolve a Telegram file_id to a full download URL via the getFile API.
+    pub async fn resolve_file_url(&self, file_id: &str) -> anyhow::Result<String> {
+        let url = self.api_url("getFile");
+        let body = serde_json::json!({ "file_id": file_id });
+
+        let resp = self
+            .http_client()
+            .post(&url)
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?;
+
+        let data: serde_json::Value = resp.json().await?;
+        let file_path = data
+            .get("result")
+            .and_then(|r| r.get("file_path"))
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("Telegram getFile returned no file_path"))?;
+
+        Ok(format!(
+            "https://api.telegram.org/file/bot{}/{}",
+            self.bot_token, file_path
+        ))
+    }
+
     async fn fetch_bot_username(&self) -> anyhow::Result<String> {
         let resp = self.http_client().get(self.api_url("getMe")).send().await?;
 
@@ -931,6 +957,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
                 .unwrap_or_default()
                 .as_secs(),
             thread_ts: None,
+            voice_attachment: None,
         })
     }
 
@@ -1048,6 +1075,11 @@ Allowlist Telegram username (without '@') or numeric user ID.",
                 .unwrap_or_default()
                 .as_secs(),
             thread_ts: None,
+            voice_attachment: Some(super::traits::VoiceAttachment {
+                url: file_id.clone(),
+                format: super::traits::AudioFormat::OggOpus,
+                duration_secs: Some(duration as u32),
+            }),
         })
     }
 
@@ -1204,6 +1236,7 @@ Allowlist Telegram username (without '@') or numeric user ID.",
                 .unwrap_or_default()
                 .as_secs(),
             thread_ts: None,
+            voice_attachment: None,
         })
     }
 
@@ -2304,6 +2337,46 @@ impl Channel for TelegramChannel {
         self.send_text_chunks(&content, chat_id, thread_id).await
     }
 
+    fn supports_voice(&self) -> bool {
+        true
+    }
+
+    async fn send_voice_bytes(
+        &self,
+        recipient: &str,
+        audio: &[u8],
+        format: super::traits::AudioFormat,
+    ) -> anyhow::Result<()> {
+        let ext = format.extension();
+        let file_name = format!("voice.{ext}");
+        let (chat_id, thread_id) = Self::parse_reply_target(recipient);
+
+        let part = reqwest::multipart::Part::bytes(audio.to_vec()).file_name(file_name);
+
+        let mut form = reqwest::multipart::Form::new()
+            .text("chat_id", chat_id.clone())
+            .part("voice", part);
+
+        if let Some(tid) = thread_id {
+            form = form.text("message_thread_id", tid);
+        }
+
+        let resp = self
+            .http_client()
+            .post(self.api_url("sendVoice"))
+            .multipart(form)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let err = resp.text().await.unwrap_or_default();
+            anyhow::bail!("Telegram sendVoice failed: {err}");
+        }
+
+        tracing::info!("Telegram voice reply sent to {chat_id}");
+        Ok(())
+    }
+
     async fn listen(&self, tx: tokio::sync::mpsc::Sender<ChannelMessage>) -> anyhow::Result<()> {
         let mut offset: i64 = 0;
 
@@ -2383,7 +2456,7 @@ Ensure only one `zeroclaw` process is using this bot token."
                         offset = uid + 1;
                     }
 
-                    let msg = if let Some(m) = self.parse_update_message(update) {
+                    let mut msg = if let Some(m) = self.parse_update_message(update) {
                         m
                     } else if let Some(m) = self.try_parse_voice_message(update).await {
                         m
@@ -2393,6 +2466,19 @@ Ensure only one `zeroclaw` process is using this bot token."
                         self.handle_unauthorized_message(update).await;
                         continue;
                     };
+
+                    // Resolve voice attachment file_id to a download URL
+                    if let Some(ref mut attachment) = msg.voice_attachment {
+                        match self.resolve_file_url(&attachment.url).await {
+                            Ok(url) => attachment.url = url,
+                            Err(e) => {
+                                tracing::warn!("Failed to resolve voice file URL: {e}");
+                                // Clear attachment so it won't be processed with an invalid URL
+                                msg.voice_attachment = None;
+                                msg.content = "[voice message - could not download]".to_string();
+                            }
+                        }
+                    }
 
                     // Send "typing" indicator immediately when we receive a message
                     let typing_body = serde_json::json!({

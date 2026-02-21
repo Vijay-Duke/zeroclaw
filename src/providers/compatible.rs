@@ -199,6 +199,12 @@ impl OpenAiCompatibleProvider {
         result
     }
 
+    /// Disable the `/v1/responses` fallback on 404.
+    /// Use for providers (e.g. GLM) that only support chat completions.
+    pub fn disable_responses_fallback(&mut self) {
+        self.supports_responses_fallback = false;
+    }
+
     fn http_client(&self) -> Client {
         if let Some(ua) = self.user_agent.as_deref() {
             let mut headers = HeaderMap::new();

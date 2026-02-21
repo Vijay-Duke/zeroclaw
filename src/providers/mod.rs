@@ -55,10 +55,8 @@ const MINIMAX_OAUTH_REFRESH_TOKEN_ENV: &str = "MINIMAX_OAUTH_REFRESH_TOKEN";
 const MINIMAX_OAUTH_REGION_ENV: &str = "MINIMAX_OAUTH_REGION";
 const MINIMAX_OAUTH_CLIENT_ID_ENV: &str = "MINIMAX_OAUTH_CLIENT_ID";
 const MINIMAX_OAUTH_DEFAULT_CLIENT_ID: &str = "78257093-7e40-4613-99e0-527b14b39113";
-const GLM_GLOBAL_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
-const GLM_CN_BASE_URL: &str = "https://open.bigmodel.cn/api/paas/v4";
+const GLM_GLOBAL_BASE_URL: &str = "https://api.z.ai/api/coding/paas/v4";
 const MOONSHOT_INTL_BASE_URL: &str = "https://api.moonshot.ai/v1";
-const MOONSHOT_CN_BASE_URL: &str = "https://api.moonshot.cn/v1";
 const QWEN_CN_BASE_URL: &str = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 const QWEN_INTL_BASE_URL: &str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
 const QWEN_US_BASE_URL: &str = "https://dashscope-us.aliyuncs.com/compatible-mode/v1";
@@ -628,9 +626,7 @@ fn minimax_base_url(name: &str) -> Option<&'static str> {
 }
 
 fn glm_base_url(name: &str) -> Option<&'static str> {
-    if is_glm_cn_alias(name) {
-        Some(GLM_CN_BASE_URL)
-    } else if is_glm_global_alias(name) {
+    if is_glm_alias(name) {
         Some(GLM_GLOBAL_BASE_URL)
     } else {
         None
@@ -638,10 +634,8 @@ fn glm_base_url(name: &str) -> Option<&'static str> {
 }
 
 fn moonshot_base_url(name: &str) -> Option<&'static str> {
-    if is_moonshot_intl_alias(name) {
+    if is_moonshot_alias(name) {
         Some(MOONSHOT_INTL_BASE_URL)
-    } else if is_moonshot_cn_alias(name) {
-        Some(MOONSHOT_CN_BASE_URL)
     } else {
         None
     }
@@ -1025,12 +1019,15 @@ fn create_provider_with_url_and_options(
             AuthStyle::Bearer,
         ))),
         name if glm_base_url(name).is_some() => {
-            Ok(Box::new(OpenAiCompatibleProvider::new_no_responses_fallback(
+            let mut p = OpenAiCompatibleProvider::new_with_user_agent(
                 "GLM",
                 glm_base_url(name).expect("checked in guard"),
                 key,
                 AuthStyle::Bearer,
-            )))
+                "claude-code/1.0",
+            );
+            p.disable_responses_fallback();
+            Ok(Box::new(p))
         }
         name if minimax_base_url(name).is_some() => Ok(Box::new(
             OpenAiCompatibleProvider::new_merge_system_into_user(
@@ -1925,10 +1922,10 @@ mod tests {
         assert_eq!(minimax_base_url("minimax-cn"), Some(MINIMAX_CN_BASE_URL));
 
         assert_eq!(glm_base_url("glm"), Some(GLM_GLOBAL_BASE_URL));
-        assert_eq!(glm_base_url("glm-cn"), Some(GLM_CN_BASE_URL));
-        assert_eq!(glm_base_url("bigmodel"), Some(GLM_CN_BASE_URL));
+        assert_eq!(glm_base_url("glm-cn"), Some(GLM_GLOBAL_BASE_URL));
+        assert_eq!(glm_base_url("bigmodel"), Some(GLM_GLOBAL_BASE_URL));
 
-        assert_eq!(moonshot_base_url("moonshot"), Some(MOONSHOT_CN_BASE_URL));
+        assert_eq!(moonshot_base_url("moonshot"), Some(MOONSHOT_INTL_BASE_URL));
         assert_eq!(
             moonshot_base_url("moonshot-intl"),
             Some(MOONSHOT_INTL_BASE_URL)

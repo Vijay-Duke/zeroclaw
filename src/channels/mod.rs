@@ -61,6 +61,9 @@ pub use signal::SignalChannel;
 pub use slack::SlackChannel;
 pub use telegram::TelegramChannel;
 pub use traits::{Channel, SendMessage};
+// Voice boundary types — re-exported for external consumers.
+#[allow(unused_imports)]
+pub use traits::{AudioFormat, AudioOutput, VoiceAttachment, VoiceOutput};
 pub use whatsapp::WhatsAppChannel;
 #[cfg(feature = "whatsapp-web")]
 pub use whatsapp_web::WhatsAppWebChannel;
@@ -221,6 +224,7 @@ struct ChannelRuntimeContext {
     multimodal: crate::config::MultimodalConfig,
     hooks: Option<Arc<crate::hooks::HookRunner>>,
     non_cli_excluded_tools: Arc<Vec<String>>,
+    voice_pipeline: Option<Arc<dyn crate::voice::VoicePipeline>>,
 }
 
 #[derive(Clone)]
@@ -1474,19 +1478,54 @@ fn spawn_scoped_typing_task(
 
 async fn process_channel_message(
     ctx: Arc<ChannelRuntimeContext>,
-    msg: traits::ChannelMessage,
+    mut msg: traits::ChannelMessage,
     cancellation_token: CancellationToken,
 ) {
     if cancellation_token.is_cancelled() {
         return;
     }
 
-    println!(
-        "  💬 [{}] from {}: {}",
-        msg.channel,
-        msg.sender,
-        truncate_with_ellipsis(&msg.content, 80)
-    );
+    // --- Voice STT: transcribe incoming voice messages ---
+    let is_voice_input = msg.voice_attachment.is_some();
+    if let Some(ref attachment) = msg.voice_attachment {
+        if let Some(ref pipeline) = ctx.voice_pipeline {
+            match pipeline.transcribe_incoming(attachment).await {
+                Ok(transcript) => {
+                    println!(
+                        "  🎙️ [{}] voice from {}: {}",
+                        msg.channel,
+                        msg.sender,
+                        truncate_with_ellipsis(&transcript, 80)
+                    );
+                    msg.content = transcript;
+                }
+                Err(e) => {
+                    tracing::warn!("Voice transcription failed: {e}");
+                    if let Some(channel) = ctx.channels_by_name.get(&msg.channel) {
+                        let _ = channel
+                            .send(&SendMessage::new(
+                                "⚠️ Could not transcribe voice message. Please try again or send text.",
+                                &msg.reply_target,
+                            ))
+                            .await;
+                    }
+                    return;
+                }
+            }
+        } else {
+            // No voice pipeline — skip voice messages
+            tracing::debug!("Voice message received but voice pipeline is not configured");
+            return;
+        }
+    } else {
+        println!(
+            "  💬 [{}] from {}: {}",
+            msg.channel,
+            msg.sender,
+            truncate_with_ellipsis(&msg.content, 80)
+        );
+    }
+
     runtime_trace::record_event(
         "channel_message_inbound",
         Some(msg.channel.as_str()),
@@ -1871,7 +1910,66 @@ async fn process_channel_message(
                 started_at.elapsed().as_millis(),
                 truncate_with_ellipsis(&delivered_response, 80)
             );
-            if let Some(channel) = target_channel.as_ref() {
+
+            // --- Voice TTS: synthesize response as voice if applicable ---
+            if let Some(ref pipeline) = ctx.voice_pipeline {
+                match pipeline
+                    .synthesize_response(&delivered_response, is_voice_input)
+                    .await
+                {
+                    Ok(traits::VoiceOutput::WithAudio { text, audio }) => {
+                        if let Some(channel) = target_channel.as_ref() {
+                            if channel.supports_voice() {
+                                if let Err(e) = channel
+                                    .send_voice_bytes(&msg.reply_target, &audio.data, audio.format)
+                                    .await
+                                {
+                                    tracing::warn!("Voice reply failed: {e}; falling back to text");
+                                    let _ = channel
+                                        .send(&SendMessage::new(&text, &msg.reply_target))
+                                        .await;
+                                }
+                            } else {
+                                // Channel doesn't support voice — send text
+                                let _ = channel
+                                    .send(&SendMessage::new(&text, &msg.reply_target))
+                                    .await;
+                            }
+                        }
+                    }
+                    Ok(traits::VoiceOutput::TextOnly(text)) => {
+                        // Normal text response path
+                        if let Some(channel) = target_channel.as_ref() {
+                            if let Some(ref draft_id) = draft_message_id {
+                                if let Err(e) = channel
+                                    .finalize_draft(&msg.reply_target, draft_id, &text)
+                                    .await
+                                {
+                                    tracing::warn!(
+                                        "Failed to finalize draft: {e}; sending as new message"
+                                    );
+                                    let _ = channel
+                                        .send(&SendMessage::new(&text, &msg.reply_target))
+                                        .await;
+                                }
+                            } else if let Err(e) = channel
+                                .send(&SendMessage::new(text, &msg.reply_target))
+                                .await
+                            {
+                                eprintln!("  ❌ Failed to reply on {}: {e}", channel.name());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Voice TTS synthesis failed: {e}; falling back to text");
+                        if let Some(channel) = target_channel.as_ref() {
+                            let _ = channel
+                                .send(&SendMessage::new(&delivered_response, &msg.reply_target))
+                                .await;
+                        }
+                    }
+                }
+            } else if let Some(channel) = target_channel.as_ref() {
                 if let Some(ref draft_id) = draft_message_id {
                     if let Err(e) = channel
                         .finalize_draft(&msg.reply_target, draft_id, &delivered_response)
@@ -3217,6 +3315,22 @@ pub async fn start_channels(config: Config) -> Result<()> {
         .as_ref()
         .is_some_and(|tg| tg.interrupt_on_new_message);
 
+    // Build voice pipeline if configured
+    let voice_pipeline = match crate::voice::create_voice_pipeline(&config.voice) {
+        Ok(Some(pipeline)) => {
+            println!(
+                "  🎙️ Voice:    {} (STT) + {} (TTS)",
+                config.voice.stt.provider, config.voice.tts.provider
+            );
+            Some(Arc::from(pipeline))
+        }
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!("Voice pipeline disabled: {e}");
+            None
+        }
+    };
+
     let runtime_ctx = Arc::new(ChannelRuntimeContext {
         channels_by_name,
         provider: Arc::clone(&provider),
@@ -3251,6 +3365,7 @@ pub async fn start_channels(config: Config) -> Result<()> {
             None
         },
         non_cli_excluded_tools: Arc::new(config.autonomy.non_cli_excluded_tools.clone()),
+        voice_pipeline,
     });
 
     run_message_dispatch_loop(rx, runtime_ctx, max_in_flight_messages).await;
@@ -3464,6 +3579,7 @@ mod tests {
             workspace_dir: Arc::new(std::env::temp_dir()),
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         };
 
         assert!(compact_sender_history(&ctx, &sender));
@@ -3513,6 +3629,7 @@ mod tests {
             workspace_dir: Arc::new(std::env::temp_dir()),
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         };
 
         append_sender_turn(&ctx, &sender, ChatMessage::user("hello"));
@@ -3565,6 +3682,7 @@ mod tests {
             workspace_dir: Arc::new(std::env::temp_dir()),
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         };
 
         assert!(rollback_orphan_user_turn(&ctx, &sender, "pending"));
@@ -4040,6 +4158,7 @@ BTC is currently around $65,000 based on latest tool output."#
             non_cli_excluded_tools: Arc::new(Vec::new()),
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -4052,6 +4171,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "test-channel".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -4097,6 +4217,7 @@ BTC is currently around $65,000 based on latest tool output."#
             message_timeout_secs: CHANNEL_MESSAGE_TIMEOUT_SECS,
             interrupt_on_new_message: false,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
         });
@@ -4111,6 +4232,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "telegram".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -4172,6 +4294,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -4184,6 +4307,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "test-channel".to_string(),
                 timestamp: 3,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -4231,6 +4355,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -4243,6 +4368,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "test-channel".to_string(),
                 timestamp: 2,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -4299,6 +4425,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -4311,6 +4438,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "telegram".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -4388,6 +4516,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -4400,6 +4529,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "telegram".to_string(),
                 timestamp: 2,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -4459,6 +4589,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -4471,6 +4602,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "telegram".to_string(),
                 timestamp: 3,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -4545,6 +4677,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -4557,6 +4690,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "telegram".to_string(),
                 timestamp: 4,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -4616,6 +4750,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -4628,6 +4763,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "test-channel".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -4676,6 +4812,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -4688,6 +4825,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "test-channel".to_string(),
                 timestamp: 2,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -4847,6 +4985,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(4);
@@ -4858,6 +4997,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channel: "test-channel".to_string(),
             timestamp: 1,
             thread_ts: None,
+            voice_attachment: None,
         })
         .await
         .unwrap();
@@ -4869,6 +5009,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channel: "test-channel".to_string(),
             timestamp: 2,
             thread_ts: None,
+            voice_attachment: None,
         })
         .await
         .unwrap();
@@ -4927,6 +5068,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(8);
@@ -4939,6 +5081,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "telegram".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             })
             .await
             .unwrap();
@@ -4951,6 +5094,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "telegram".to_string(),
                 timestamp: 2,
                 thread_ts: None,
+                voice_attachment: None,
             })
             .await
             .unwrap();
@@ -5019,6 +5163,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<traits::ChannelMessage>(8);
@@ -5031,6 +5176,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "telegram".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             })
             .await
             .unwrap();
@@ -5043,6 +5189,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "telegram".to_string(),
                 timestamp: 2,
                 thread_ts: None,
+                voice_attachment: None,
             })
             .await
             .unwrap();
@@ -5093,6 +5240,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -5105,6 +5253,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "test-channel".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -5152,6 +5301,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -5164,6 +5314,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "test-channel".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -5540,6 +5691,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channel: "slack".into(),
             timestamp: 1,
             thread_ts: None,
+            voice_attachment: None,
         };
 
         assert_eq!(conversation_memory_key(&msg), "slack_U123_msg_abc123");
@@ -5555,6 +5707,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channel: "slack".into(),
             timestamp: 1,
             thread_ts: None,
+            voice_attachment: None,
         };
         let msg2 = traits::ChannelMessage {
             id: "msg_2".into(),
@@ -5564,6 +5717,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channel: "slack".into(),
             timestamp: 2,
             thread_ts: None,
+            voice_attachment: None,
         };
 
         assert_ne!(
@@ -5585,6 +5739,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channel: "slack".into(),
             timestamp: 1,
             thread_ts: None,
+            voice_attachment: None,
         };
         let msg2 = traits::ChannelMessage {
             id: "msg_2".into(),
@@ -5594,6 +5749,7 @@ BTC is currently around $65,000 based on latest tool output."#
             channel: "slack".into(),
             timestamp: 2,
             thread_ts: None,
+            voice_attachment: None,
         };
 
         mem.store(
@@ -5668,6 +5824,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -5680,6 +5837,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "test-channel".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -5695,6 +5853,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "test-channel".to_string(),
                 timestamp: 2,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -5753,6 +5912,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -5765,6 +5925,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "test-channel".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -5838,6 +5999,7 @@ BTC is currently around $65,000 based on latest tool output."#
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -5850,6 +6012,7 @@ BTC is currently around $65,000 based on latest tool output."#
                 channel: "telegram".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -6387,6 +6550,7 @@ This is an example JSON object for profile settings."#;
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         // Simulate a photo attachment message with [IMAGE:] marker.
@@ -6400,6 +6564,7 @@ This is an example JSON object for profile settings."#;
                 channel: "test-channel".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -6453,6 +6618,7 @@ This is an example JSON object for profile settings."#;
             multimodal: crate::config::MultimodalConfig::default(),
             hooks: None,
             non_cli_excluded_tools: Arc::new(Vec::new()),
+            voice_pipeline: None,
         });
 
         process_channel_message(
@@ -6465,6 +6631,7 @@ This is an example JSON object for profile settings."#;
                 channel: "test-channel".to_string(),
                 timestamp: 1,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )
@@ -6480,6 +6647,7 @@ This is an example JSON object for profile settings."#;
                 channel: "test-channel".to_string(),
                 timestamp: 2,
                 thread_ts: None,
+                voice_attachment: None,
             },
             CancellationToken::new(),
         )

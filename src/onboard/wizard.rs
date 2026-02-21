@@ -165,6 +165,7 @@ pub async fn run_wizard(force: bool) -> Result<Config> {
         hooks: crate::config::HooksConfig::default(),
         hardware: hardware_config,
         query_classification: crate::config::QueryClassificationConfig::default(),
+        voice: crate::config::VoiceConfig::default(),
         transcription: crate::config::TranscriptionConfig::default(),
     };
 
@@ -512,6 +513,7 @@ async fn run_quick_setup_with_home(
         hooks: crate::config::HooksConfig::default(),
         hardware: crate::config::HardwareConfig::default(),
         query_classification: crate::config::QueryClassificationConfig::default(),
+        voice: crate::config::VoiceConfig::default(),
         transcription: crate::config::TranscriptionConfig::default(),
     };
 
@@ -6720,8 +6722,7 @@ mod tests {
 
         let config = Config {
             workspace_dir: tmp.path().to_path_buf(),
-            // Use a non-provider channel key to keep this test deterministic and offline.
-            default_provider: Some("imessage".to_string()),
+            default_provider: Some("unsupported-provider".to_string()),
             ..Config::default()
         };
 

@@ -697,7 +697,12 @@ mod tests {
     #[tokio::test]
     async fn run_agent_job_returns_error_without_provider_key() {
         let tmp = TempDir::new().unwrap();
-        let config = test_config(&tmp).await;
+        let mut config = test_config(&tmp).await;
+        // Use a provider name that cannot resolve credentials from any env var,
+        // ensuring the test is deterministic regardless of the host environment.
+        config.default_provider = Some("no-such-provider".into());
+        config.api_key = None;
+
         let mut job = test_job("");
         job.job_type = JobType::Agent;
         job.prompt = Some("Say hello".into());
