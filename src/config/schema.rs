@@ -4209,11 +4209,7 @@ impl Config {
         }
 
         for provider in config_to_save.providers.values_mut() {
-            encrypt_optional_secret(
-                &store,
-                &mut provider.api_key,
-                "config.providers.*.api_key",
-            )?;
+            encrypt_optional_secret(&store, &mut provider.api_key, "config.providers.*.api_key")?;
         }
 
         if let Some(ref mut ns) = config_to_save.channels_config.nostr {

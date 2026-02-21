@@ -248,7 +248,9 @@ impl OpenAiCompatibleProvider {
                 crate::config::apply_runtime_proxy_to_builder(builder, "provider.compatible");
 
             return builder.build().unwrap_or_else(|error| {
-                tracing::warn!("Failed to build proxied timeout client with custom headers: {error}");
+                tracing::warn!(
+                    "Failed to build proxied timeout client with custom headers: {error}"
+                );
                 Client::new()
             });
         }
