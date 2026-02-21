@@ -54,6 +54,8 @@ const SUPPORTED_PROXY_SERVICE_SELECTORS: &[&str] = &[
 static RUNTIME_PROXY_CONFIG: OnceLock<RwLock<ProxyConfig>> = OnceLock::new();
 static RUNTIME_PROXY_CLIENT_CACHE: OnceLock<RwLock<HashMap<String, reqwest::Client>>> =
     OnceLock::new();
+static CUSTOM_PROVIDERS_REGISTRY: OnceLock<HashMap<String, CustomCompatibleProvider>> =
+    OnceLock::new();
 
 // ── Top-level config ──────────────────────────────────────────────
 
@@ -3871,6 +3873,20 @@ impl Config {
         self.proxy.validate()?;
 
         Ok(())
+    }
+
+    /// Register config-driven providers for factory lookup.
+    /// Called once at startup after config is loaded.
+    pub fn register_custom_providers(&self) {
+        let _ = CUSTOM_PROVIDERS_REGISTRY.set(self.providers.clone());
+    }
+
+    /// Get the registered custom providers (for factory lookup).
+    pub fn custom_providers_registry() -> &'static HashMap<String, CustomCompatibleProvider> {
+        static EMPTY: OnceLock<HashMap<String, CustomCompatibleProvider>> = OnceLock::new();
+        CUSTOM_PROVIDERS_REGISTRY
+            .get()
+            .unwrap_or_else(|| EMPTY.get_or_init(HashMap::new))
     }
 
     /// Apply environment variable overrides to config
