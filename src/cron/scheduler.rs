@@ -696,6 +696,22 @@ mod tests {
 
     #[tokio::test]
     async fn run_agent_job_returns_error_without_provider_key() {
+        // Temporarily clear provider env vars so the agent can't fall back
+        // to environment credentials (e.g. OPENROUTER_API_KEY).
+        let env_keys = [
+            "OPENROUTER_API_KEY",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+        ];
+        let saved: Vec<_> = env_keys
+            .iter()
+            .map(|k| (*k, std::env::var(k).ok()))
+            .collect();
+        for k in &env_keys {
+            std::env::remove_var(k);
+        }
+
         let tmp = TempDir::new().unwrap();
         let config = test_config(&tmp).await;
         let mut job = test_job("");
@@ -704,6 +720,15 @@ mod tests {
         let security = SecurityPolicy::from_config(&config.autonomy, &config.workspace_dir);
 
         let (success, output) = run_agent_job(&config, &security, &job).await;
+
+        // Restore env vars
+        for (k, v) in saved {
+            match v {
+                Some(val) => std::env::set_var(k, val),
+                None => std::env::remove_var(k),
+            }
+        }
+
         assert!(!success);
         assert!(output.contains("agent job failed:"));
     }
