@@ -921,6 +921,74 @@ pub fn create_provider_with_options(
     }
 }
 
+/// Create an OpenAI-compatible provider from a config-registered entry.
+fn try_create_from_config_entry(
+    entry: &crate::config::CustomCompatibleProvider,
+    api_key_override: Option<&str>,
+) -> anyhow::Result<Box<dyn Provider>> {
+    // Credential resolution: override > entry.api_key > entry.api_key_env > None
+    let credential = api_key_override
+        .map(String::from)
+        .or_else(|| entry.api_key.clone())
+        .or_else(|| {
+            entry
+                .api_key_env
+                .as_deref()
+                .and_then(|env_name| std::env::var(env_name).ok())
+                .filter(|v| !v.trim().is_empty())
+        });
+
+    let auth_style = match entry.auth_style.as_deref() {
+        Some("x-api-key") => AuthStyle::XApiKey,
+        _ => AuthStyle::Bearer,
+    };
+
+    let display_name = entry.display_name.as_deref().unwrap_or("Custom");
+
+    let headers = entry.headers.clone().unwrap_or_default();
+
+    if headers.is_empty() {
+        Ok(Box::new(OpenAiCompatibleProvider::new(
+            display_name,
+            &entry.url,
+            credential.as_deref(),
+            auth_style,
+        )))
+    } else {
+        Ok(Box::new(OpenAiCompatibleProvider::new_with_headers(
+            display_name,
+            &entry.url,
+            credential.as_deref(),
+            auth_style,
+            headers,
+        )))
+    }
+}
+
+/// Look up a provider name in the config-registered providers map.
+/// Checks both primary keys and aliases. Returns a constructed provider if found.
+fn try_resolve_from_registry(
+    providers: &std::collections::HashMap<String, crate::config::CustomCompatibleProvider>,
+    name: &str,
+    api_key: Option<&str>,
+) -> Option<Box<dyn Provider>> {
+    // Direct key match
+    if let Some(entry) = providers.get(name) {
+        return try_create_from_config_entry(entry, api_key).ok();
+    }
+
+    // Alias match
+    for entry in providers.values() {
+        if let Some(aliases) = &entry.aliases {
+            if aliases.iter().any(|a| a.as_str() == name) {
+                return try_create_from_config_entry(entry, api_key).ok();
+            }
+        }
+    }
+
+    None
+}
+
 /// Factory: create the right provider from config with optional custom base URL
 pub fn create_provider_with_url(
     name: &str,
@@ -938,6 +1006,12 @@ fn create_provider_with_url_and_options(
     api_url: Option<&str>,
     options: &ProviderRuntimeOptions,
 ) -> anyhow::Result<Box<dyn Provider>> {
+    // ── Config-registered providers (checked first) ─────────
+    let registry = crate::config::Config::custom_providers_registry();
+    if let Some(provider) = try_resolve_from_registry(registry, name, api_key) {
+        return Ok(provider);
+    }
+
     let qwen_oauth_context = is_qwen_oauth_alias(name).then(|| resolve_qwen_oauth_context(api_key));
 
     // Resolve credential and break static-analysis taint chain from the
@@ -2858,5 +2932,80 @@ mod tests {
 
         let provider = create_resilient_provider("ollama", None, None, &reliability);
         assert!(provider.is_ok());
+    }
+
+    #[test]
+    fn factory_config_registered_provider() {
+        use crate::config::CustomCompatibleProvider;
+        use std::collections::HashMap;
+
+        let mut headers = HashMap::new();
+        headers.insert("User-Agent".to_string(), "TestAgent/1.0".to_string());
+
+        let entry = CustomCompatibleProvider {
+            url: "https://api.test-provider.com/v1".to_string(),
+            display_name: Some("Test Provider".to_string()),
+            api_key: Some("test-key-123".to_string()),
+            api_key_env: None,
+            auth_style: Some("bearer".to_string()),
+            default_model: Some("test-model".to_string()),
+            aliases: Some(vec!["test-alias".to_string()]),
+            headers: Some(headers),
+        };
+
+        let result = try_create_from_config_entry(&entry, Some("override-key"));
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn factory_config_registered_provider_api_key_from_entry() {
+        use crate::config::CustomCompatibleProvider;
+
+        let entry = CustomCompatibleProvider {
+            url: "https://api.test-provider.com/v1".to_string(),
+            display_name: None,
+            api_key: Some("entry-key".to_string()),
+            api_key_env: None,
+            auth_style: None,
+            default_model: None,
+            aliases: None,
+            headers: None,
+        };
+
+        let result = try_create_from_config_entry(&entry, None);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn factory_resolves_config_registered_provider_by_name() {
+        use crate::config::CustomCompatibleProvider;
+        use std::collections::HashMap;
+
+        let mut providers = HashMap::new();
+        providers.insert(
+            "my-custom-llm".to_string(),
+            CustomCompatibleProvider {
+                url: "https://api.custom-llm.example.com/v1".to_string(),
+                display_name: Some("My Custom LLM".to_string()),
+                api_key: Some("custom-key".to_string()),
+                api_key_env: None,
+                auth_style: Some("bearer".to_string()),
+                default_model: None,
+                aliases: Some(vec!["custom-alias".to_string()]),
+                headers: None,
+            },
+        );
+
+        // Look up by primary name
+        let result = try_resolve_from_registry(&providers, "my-custom-llm", None);
+        assert!(result.is_some());
+
+        // Look up by alias
+        let result = try_resolve_from_registry(&providers, "custom-alias", None);
+        assert!(result.is_some());
+
+        // Unknown name returns None
+        let result = try_resolve_from_registry(&providers, "unknown", None);
+        assert!(result.is_none());
     }
 }
