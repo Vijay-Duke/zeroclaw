@@ -15,6 +15,7 @@ use reqwest::{
     Client,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// A provider that speaks the OpenAI-compatible chat completions API.
 /// Used by: Venice, Vercel AI Gateway, Cloudflare AI Gateway, Moonshot,
@@ -28,7 +29,7 @@ pub struct OpenAiCompatibleProvider {
     /// When false, do not fall back to /v1/responses on chat completions 404.
     /// GLM/Zhipu does not support the responses API.
     supports_responses_fallback: bool,
-    user_agent: Option<String>,
+    custom_headers: HashMap<String, String>,
     /// When true, collect all `system` messages and prepend their content
     /// to the first `user` message, then drop the system messages.
     /// Required for providers that reject `role: system` (e.g. MiniMax).
@@ -146,6 +147,26 @@ impl OpenAiCompatibleProvider {
         )
     }
 
+    /// Create a provider with arbitrary custom HTTP headers.
+    pub fn new_with_headers(
+        name: &str,
+        base_url: &str,
+        credential: Option<&str>,
+        auth_style: AuthStyle,
+        headers: HashMap<String, String>,
+    ) -> Self {
+        Self {
+            name: name.to_string(),
+            base_url: base_url.trim_end_matches('/').to_string(),
+            credential: credential.map(ToString::to_string),
+            auth_header: auth_style,
+            supports_vision: false,
+            supports_responses_fallback: true,
+            custom_headers: headers,
+            merge_system_into_user: false,
+        }
+    }
+
     fn new_with_options(
         name: &str,
         base_url: &str,
@@ -156,6 +177,10 @@ impl OpenAiCompatibleProvider {
         user_agent: Option<&str>,
         merge_system_into_user: bool,
     ) -> Self {
+        let mut custom_headers = HashMap::new();
+        if let Some(ua) = user_agent {
+            custom_headers.insert("User-Agent".to_string(), ua.to_string());
+        }
         Self {
             name: name.to_string(),
             base_url: base_url.trim_end_matches('/').to_string(),
@@ -163,7 +188,7 @@ impl OpenAiCompatibleProvider {
             auth_header: auth_style,
             supports_vision,
             supports_responses_fallback,
-            user_agent: user_agent.map(ToString::to_string),
+            custom_headers,
             merge_system_into_user,
         }
     }
@@ -200,10 +225,19 @@ impl OpenAiCompatibleProvider {
     }
 
     fn http_client(&self) -> Client {
-        if let Some(ua) = self.user_agent.as_deref() {
+        if !self.custom_headers.is_empty() {
             let mut headers = HeaderMap::new();
-            if let Ok(value) = HeaderValue::from_str(ua) {
-                headers.insert(USER_AGENT, value);
+            for (key, value) in &self.custom_headers {
+                if key.eq_ignore_ascii_case("user-agent") {
+                    if let Ok(val) = HeaderValue::from_str(value) {
+                        headers.insert(USER_AGENT, val);
+                    }
+                } else if let (Ok(name), Ok(val)) = (
+                    reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+                    HeaderValue::from_str(value),
+                ) {
+                    headers.insert(name, val);
+                }
             }
 
             let builder = Client::builder()
@@ -214,7 +248,7 @@ impl OpenAiCompatibleProvider {
                 crate::config::apply_runtime_proxy_to_builder(builder, "provider.compatible");
 
             return builder.build().unwrap_or_else(|error| {
-                tracing::warn!("Failed to build proxied timeout client with user-agent: {error}");
+                tracing::warn!("Failed to build proxied timeout client with custom headers: {error}");
                 Client::new()
             });
         }
@@ -2639,5 +2673,21 @@ mod tests {
         let json = r#"{"choices": [{"message": {"content": "Hello"}}]}"#;
         let resp: ApiChatResponse = serde_json::from_str(json).unwrap();
         assert!(resp.usage.is_none());
+    }
+
+    #[test]
+    fn compatible_provider_with_custom_headers() {
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("User-Agent".to_string(), "TestAgent/1.0".to_string());
+        headers.insert("X-Custom".to_string(), "custom-value".to_string());
+        let provider = OpenAiCompatibleProvider::new_with_headers(
+            "Test",
+            "https://api.test.com/v1",
+            Some("test-key"),
+            AuthStyle::Bearer,
+            headers,
+        );
+        assert_eq!(provider.name, "Test");
+        assert_eq!(provider.custom_headers.len(), 2);
     }
 }
