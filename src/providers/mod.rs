@@ -974,14 +974,26 @@ fn try_resolve_from_registry(
 ) -> Option<Box<dyn Provider>> {
     // Direct key match
     if let Some(entry) = providers.get(name) {
-        return try_create_from_config_entry(entry, api_key).ok();
+        match try_create_from_config_entry(entry, api_key) {
+            Ok(provider) => return Some(provider),
+            Err(e) => {
+                tracing::warn!(provider = name, "Config-registered provider failed to initialize: {e}");
+                return None;
+            }
+        }
     }
 
     // Alias match
-    for entry in providers.values() {
+    for (key, entry) in providers {
         if let Some(aliases) = &entry.aliases {
             if aliases.iter().any(|a| a.as_str() == name) {
-                return try_create_from_config_entry(entry, api_key).ok();
+                match try_create_from_config_entry(entry, api_key) {
+                    Ok(provider) => return Some(provider),
+                    Err(e) => {
+                        tracing::warn!(provider = key, alias = name, "Config-registered provider failed to initialize: {e}");
+                        return None;
+                    }
+                }
             }
         }
     }

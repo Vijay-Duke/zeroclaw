@@ -227,6 +227,7 @@ pub async fn run_channels_repair_wizard() -> Result<Config> {
     println!();
 
     let mut config = Config::load_or_init().await?;
+    config.register_custom_providers();
 
     print_step(1, 1, "Channels (How You Talk to ZeroClaw)");
     config.channels_config = setup_channels()?;
