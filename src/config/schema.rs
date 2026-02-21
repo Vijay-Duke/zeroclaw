@@ -202,6 +202,10 @@ pub struct Config {
     /// Voice transcription configuration (Whisper API via Groq).
     #[serde(default)]
     pub transcription: TranscriptionConfig,
+
+    /// Config-registered OpenAI-compatible providers.
+    #[serde(default)]
+    pub providers: HashMap<String, CustomCompatibleProvider>,
 }
 
 // ── Delegate Agents ──────────────────────────────────────────────
@@ -358,6 +362,37 @@ impl Default for TranscriptionConfig {
             max_duration_secs: default_transcription_max_duration_secs(),
         }
     }
+}
+
+// ── Custom Compatible Providers ─────────────────────────────────
+
+/// Config-registered OpenAI-compatible provider.
+/// Allows adding providers via config.toml without source code changes.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct CustomCompatibleProvider {
+    /// Base URL for the provider API (e.g. "https://api.kimi.com/coding/v1")
+    pub url: String,
+    /// Display name (defaults to titlecase of config key if omitted)
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// Per-provider API key (optional, falls back to top-level api_key)
+    #[serde(default)]
+    pub api_key: Option<String>,
+    /// Environment variable name to check for API key
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Auth style: "bearer" (default) or "x-api-key"
+    #[serde(default)]
+    pub auth_style: Option<String>,
+    /// Default model to use when none is specified
+    #[serde(default)]
+    pub default_model: Option<String>,
+    /// Alternative provider names that resolve to this entry
+    #[serde(default)]
+    pub aliases: Option<Vec<String>>,
+    /// Arbitrary HTTP headers to include in every request
+    #[serde(default)]
+    pub headers: Option<HashMap<String, String>>,
 }
 
 /// Agent orchestration configuration (`[agent]` section).
@@ -3297,6 +3332,7 @@ impl Default for Config {
             hardware: HardwareConfig::default(),
             query_classification: QueryClassificationConfig::default(),
             transcription: TranscriptionConfig::default(),
+            providers: HashMap::new(),
         }
     }
 }
@@ -4529,6 +4565,7 @@ default_temperature = 0.7
             hooks: HooksConfig::default(),
             hardware: HardwareConfig::default(),
             transcription: TranscriptionConfig::default(),
+            providers: HashMap::new(),
         };
 
         let toml_str = toml::to_string_pretty(&config).unwrap();
@@ -4702,6 +4739,7 @@ tool_dispatcher = "xml"
             hooks: HooksConfig::default(),
             hardware: HardwareConfig::default(),
             transcription: TranscriptionConfig::default(),
+            providers: HashMap::new(),
         };
 
         config.save().await.unwrap();
@@ -6718,5 +6756,47 @@ default_model = "legacy-model"
         let parsed: Config = toml::from_str(toml_str).unwrap();
         assert!(!parsed.transcription.enabled);
         assert_eq!(parsed.transcription.max_duration_secs, 120);
+    }
+
+    #[test]
+    async fn config_deserializes_custom_compatible_providers() {
+        let raw = r#"
+default_temperature = 0.7
+
+[providers.kimi-code]
+url = "https://api.kimi.com/coding/v1"
+display_name = "Kimi Code"
+api_key_env = "KIMI_CODE_API_KEY"
+auth_style = "bearer"
+default_model = "kimi-for-coding"
+aliases = ["kimi_coding"]
+
+[providers.kimi-code.headers]
+User-Agent = "KimiCLI/0.77"
+"#;
+        let parsed: Config = toml::from_str(raw).unwrap();
+        let kimi = parsed
+            .providers
+            .get("kimi-code")
+            .expect("kimi-code not found");
+        assert_eq!(kimi.url, "https://api.kimi.com/coding/v1");
+        assert_eq!(kimi.display_name.as_deref(), Some("Kimi Code"));
+        assert_eq!(kimi.auth_style.as_deref(), Some("bearer"));
+        assert_eq!(kimi.default_model.as_deref(), Some("kimi-for-coding"));
+        assert_eq!(
+            kimi.aliases.as_deref(),
+            Some(&["kimi_coding".to_string()][..])
+        );
+        let headers = kimi.headers.as_ref().expect("headers missing");
+        assert_eq!(
+            headers.get("User-Agent").map(String::as_str),
+            Some("KimiCLI/0.77")
+        );
+    }
+
+    #[test]
+    async fn config_default_has_empty_providers() {
+        let config = Config::default();
+        assert!(config.providers.is_empty());
     }
 }
