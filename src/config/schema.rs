@@ -3736,6 +3736,14 @@ impl Config {
                 decrypt_optional_secret(&store, &mut agent.api_key, "config.agents.*.api_key")?;
             }
 
+            for provider in config.providers.values_mut() {
+                decrypt_optional_secret(
+                    &store,
+                    &mut provider.api_key,
+                    "config.providers.*.api_key",
+                )?;
+            }
+
             if let Some(ref mut ns) = config.channels_config.nostr {
                 decrypt_secret(
                     &store,
@@ -4182,6 +4190,14 @@ impl Config {
 
         for agent in config_to_save.agents.values_mut() {
             encrypt_optional_secret(&store, &mut agent.api_key, "config.agents.*.api_key")?;
+        }
+
+        for provider in config_to_save.providers.values_mut() {
+            encrypt_optional_secret(
+                &store,
+                &mut provider.api_key,
+                "config.providers.*.api_key",
+            )?;
         }
 
         if let Some(ref mut ns) = config_to_save.channels_config.nostr {
@@ -4841,6 +4857,54 @@ tool_dispatcher = "xml"
         assert_eq!(
             store.decrypt(storage_db_url).unwrap(),
             "postgres://user:pw@host/db"
+        );
+
+        let _ = fs::remove_dir_all(&dir).await;
+    }
+
+    #[tokio::test]
+    async fn config_save_encrypts_provider_api_keys() {
+        let dir = std::env::temp_dir().join(format!(
+            "zeroclaw_test_provider_api_keys_{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).await.unwrap();
+
+        let mut config = Config::default();
+        config.workspace_dir = dir.join("workspace");
+        config.config_path = dir.join("config.toml");
+
+        config.providers.insert(
+            "kimi-code".into(),
+            CustomCompatibleProvider {
+                url: "https://api.kimi.com/coding/v1".into(),
+                display_name: Some("Kimi Code".into()),
+                api_key: Some("provider-credential".into()),
+                api_key_env: None,
+                auth_style: None,
+                default_model: None,
+                aliases: None,
+                headers: None,
+            },
+        );
+
+        config.save().await.unwrap();
+
+        let contents = tokio::fs::read_to_string(config.config_path.clone())
+            .await
+            .unwrap();
+        let stored: Config = toml::from_str(&contents).unwrap();
+        let store = crate::security::SecretStore::new(&dir, true);
+
+        let provider = stored.providers.get("kimi-code").unwrap();
+        let provider_encrypted = provider.api_key.as_deref().unwrap();
+        assert!(
+            crate::security::SecretStore::is_encrypted(provider_encrypted),
+            "provider api_key should be encrypted at rest"
+        );
+        assert_eq!(
+            store.decrypt(provider_encrypted).unwrap(),
+            "provider-credential"
         );
 
         let _ = fs::remove_dir_all(&dir).await;
