@@ -5618,6 +5618,9 @@ mod tests {
 
     #[tokio::test]
     async fn quick_setup_without_model_uses_provider_default_model() {
+        let _env_guard = env_lock().lock().unwrap();
+        let _ws_env = EnvVarGuard::unset("ZEROCLAW_WORKSPACE");
+        let _cfg_env = EnvVarGuard::unset("ZEROCLAW_CONFIG_DIR");
         let tmp = TempDir::new().unwrap();
 
         let config = run_quick_setup_with_home(
